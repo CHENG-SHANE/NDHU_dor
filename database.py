@@ -32,6 +32,7 @@ class User(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     email = Column(String, unique=True, index=True)
     name = Column(String, nullable=True)
+    last_message_sent_at = Column(DateTime, nullable=True)
     requests = relationship("ExchangeRequest", back_populates="user")
 
 class ExchangeRequest(Base):

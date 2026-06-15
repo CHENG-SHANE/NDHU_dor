@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from database import SessionLocal, User, ExchangeRequest
 from sqlalchemy.orm import Session
@@ -185,7 +185,7 @@ class PublicExchangeRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class SendMessageData(BaseModel):
-    message: str
+    message: str = Field(..., max_length=500, description="發送給對方的訊息，限制500字以內")
 
 # --- Routes ---
 @app.get("/", response_class=HTMLResponse)
@@ -232,15 +232,24 @@ async def logout(request: Request):
 # --- API Routes ---
 
 @app.get("/api/requests", response_model=List[PublicExchangeRequest])
-def get_requests(gender: Optional[str] = None, db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
-    """取得隱私大廳清單，強制套用 PublicExchangeRequest 避免個資外洩，並依據性別過濾"""
+def get_requests(
+    gender: Optional[str] = None, 
+    limit: int = 50,
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(require_auth)
+):
+    """取得隱私大廳清單，強制套用 PublicExchangeRequest 避免個資外洩，並依據性別過濾，限制回傳數量"""
     if not gender:
         return []
         
+    # 限制最大可查詢數量，防止惡意請求過大
+    if limit > 100:
+        limit = 100
+
     requests = db.query(ExchangeRequest).filter(
         ExchangeRequest.status == "PENDING",
         ExchangeRequest.gender == gender
-    ).order_by(ExchangeRequest.created_at.desc()).all()
+    ).order_by(ExchangeRequest.created_at.desc()).limit(limit).all()
     return requests
 
 @app.post("/api/requests/{req_id}/message")
@@ -252,6 +261,12 @@ def send_manual_message(
     current_user: User = Depends(require_auth)
 ):
     """手動發送訊息給感興趣的刊登者"""
+    # 檢查發信冷卻時間 (5 分鐘)
+    if current_user.last_message_sent_at:
+        cooldown = timedelta(minutes=5)
+        if datetime.utcnow() - current_user.last_message_sent_at < cooldown:
+            raise HTTPException(status_code=429, detail="發信過於頻繁，請稍後再試 (冷卻時間 5 分鐘)")
+
     target_req = db.query(ExchangeRequest).filter(
         ExchangeRequest.id == req_id,
         ExchangeRequest.status == "PENDING"
@@ -263,11 +278,10 @@ def send_manual_message(
     if target_req.user_id == current_user.id:
         raise HTTPException(status_code=400, detail="不能發送訊息給自己")
         
-    # 提早把資料拿完，手動關閉資料庫連線
+    # 提早把資料拿完
     target_email = target_req.user.email
     building = target_req.current_building
     room = target_req.current_room
-    db.close() 
 
     # 加入背景任務發信（官方邏輯不可被用戶修改）
     background_tasks.add_task(
@@ -278,6 +292,10 @@ def send_manual_message(
         room,
         data.message
     )
+    
+    # 更新最後發信時間
+    current_user.last_message_sent_at = datetime.utcnow()
+    db.commit()
     
     return {"message": "已成功發送訊息給對方"}
 
@@ -313,11 +331,11 @@ def create_exchange_request(
         if not re.match(r"^\d{3}$", target_room_str):
             raise HTTPException(status_code=400, detail="目標房號必須為三位數字")
 
-    # 檢查是否已有處理中的訂單
+    # 檢查是否已有處理中的訂單 (加上 with_for_update 鎖定，避免併發造成的 Race Condition)
     existing_req = db.query(ExchangeRequest).filter(
         ExchangeRequest.user_id == current_user.id,
         ExchangeRequest.status.in_(["PENDING", "MATCHED"])
-    ).first()
+    ).with_for_update().first()
     
     if existing_req:
         raise HTTPException(status_code=400, detail="您已有進行中的請求，請先解除配對或刪除該請求")
@@ -352,6 +370,10 @@ def create_exchange_request(
         break
         
     if matched_candidate:
+        # 提早將 Email 資料撈出來存成獨立的純文字字串變數
+        current_user_email = str(current_user.email)
+        partner_email = str(matched_candidate.user.email)
+
         new_req = ExchangeRequest(
             user_id=current_user.id,
             gender=req.gender,
@@ -364,24 +386,20 @@ def create_exchange_request(
             target_room=req.target_room,
             status="MATCHED",
             matched_with_id=matched_candidate.user_id,
-            matched_email=matched_candidate.user.email
+            matched_email=partner_email
         )
         db.add(new_req)
         
         # 更新 B 訂單 (狀態 MATCHED)
         matched_candidate.status = "MATCHED"
         matched_candidate.matched_with_id = current_user.id
-        matched_candidate.matched_email = current_user.email
+        matched_candidate.matched_email = current_user_email
         
         db.commit()
 
-        # 抓出需要的 Email 資料，手動關閉釋放 DB 連線
-        partner_email = matched_candidate.user.email
-        db.close()
-
-        # 指派背景任務發送 Email
-        background_tasks.add_task(send_match_email, current_user.email, partner_email)
-        background_tasks.add_task(send_match_email, partner_email, current_user.email)
+        # 指派背景任務發送 Email，帶入純文字字串變數
+        background_tasks.add_task(send_match_email, current_user_email, partner_email)
+        background_tasks.add_task(send_match_email, partner_email, current_user_email)
 
         return {"status": "MATCHED", "message": "match成功!", "matched_email": partner_email}
     else:
@@ -401,7 +419,6 @@ def create_exchange_request(
         db.add(new_req)
         db.commit()
         
-        db.close()
         return {"status": "PENDING", "message": "已刊登至大廳，等待有緣人"}
 
 @app.post("/api/unmatch")
