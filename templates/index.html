@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>東華換宿系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'media', 
+            theme: {
+                extend: {}
+            }
+        }
+    </script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-zinc-950 text-gray-800 dark:text-zinc-200 min-h-screen font-sans transition-colors duration-200">
+
+    <header class="border-b border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+        <h1 class="text-xl font-bold tracking-tight">東華換宿系統</h1>
+        {% if user %}
+            <div class="flex items-center gap-4 text-sm">
+                <span class="hidden sm:inline text-gray-500 dark:text-zinc-400">{{ user.email }}</span>
+                <a href="/logout" class="px-3 py-1.5 border border-gray-300 dark:border-zinc-700 rounded hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors">登出</a>
+            </div>
+        {% endif %}
+    </header>
+
+    <main class="max-w-6xl mx-auto p-6">
+        {% if not user %}
+            <div class="flex flex-col items-center justify-center min-h-[60vh] space-y-6">
+                <div class="text-center space-y-2">
+                    <h2 class="text-3xl font-semibold">歡迎來到宿舍交換大廳</h2>
+                    <p class="text-gray-500 dark:text-zinc-400">請使用學校信箱登入以刊登您的交換需求</p>
+                </div>
+                <a href="/login" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-sm transition-colors">
+                    使用 Google 登入 (@gms.ndhu.edu.tw)
+                </a>
+            </div>
+        {% else %}
+            <div id="loadingView" class="flex justify-center items-center py-20">
+                <p class="text-gray-500 dark:text-zinc-400 animate-pulse">載入資料中...</p>
+            </div>
+
+            <div id="matchedView" class="hidden flex-col items-center justify-center min-h-[50vh] space-y-6 text-center">
+                <div class="p-8 border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-900/20 rounded-xl max-w-lg w-full">
+                    <h2 class="text-2xl font-bold text-green-700 dark:text-green-400 mb-4">媒合成功！</h2>
+                    <p class="mb-6 text-gray-700 dark:text-zinc-300">系統已為您找到條件相符的同學，請盡速主動聯繫對方進行後續確認：</p>
+                    <div class="p-4 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded font-mono text-lg mb-8" id="matchedEmailDisplay">
+                        </div>
+                    <button id="unmatchBtn" class="px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-900 rounded transition-colors">
+                        解除配對並重新尋找
+                    </button>
+                </div>
+            </div>
+
+            <div id="pendingView" class="hidden grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                
+                <section class="bg-white dark:bg-zinc-900 p-6 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-xl font-semibold">我的需求表單</h2>
+                        <button id="deleteRequestBtn" class="hidden text-sm text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300">刪除請求</button>
+                    </div>
+
+                    <form id="exchangeForm" class="space-y-6">
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium">您的性別</label>
+                            <div class="flex gap-4">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" name="gender" value="M" class="text-blue-600" required> 男
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" name="gender" value="F" class="text-blue-600" required> 女
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="p-4 bg-gray-50 dark:bg-zinc-950 border border-gray-100 dark:border-zinc-800 rounded-lg space-y-4">
+                            <h3 class="text-sm font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">目前狀態 (必填)</h3>
+                            
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium mb-1">莊別</label>
+                                    <select name="current_building" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
+                                        <option value="">請先選擇性別</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium mb-1">房號</label>
+                                    <input type="text" name="current_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="例如: 205" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium mb-1">床號</label>
+                                    <select name="current_bed" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
+                                        <option value="1">1 號床</option>
+                                        <option value="2">2 號床</option>
+                                        <option value="3">3 號床</option>
+                                        <option value="4">4 號床</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="p-4 border border-dashed border-gray-300 dark:border-zinc-700 rounded-lg space-y-4">
+                            <h3 class="text-sm font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">目標狀態 (彈性)</h3>
+                            
+                            <div>
+                                <label class="block text-sm font-medium mb-2">目標莊別 (可複選)</label>
+                                <div id="targetBuildingsContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    <span class="text-sm text-gray-500 dark:text-zinc-500">請先選擇性別</span>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4 pt-2">
+                                <div>
+                                    <label class="block text-sm font-medium mb-1">目標樓層 (選填)</label>
+                                    <select name="target_floor" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+                                        <option value="">不拘</option>
+                                        {% for i in range(1, 6) %}
+                                        <option value="{{ i }}">{{ i }} 樓</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium mb-1">目標房號 (選填)</label>
+                                    <input type="text" name="target_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="例如: 205" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="formMessage" class="text-sm hidden p-3 rounded"></div>
+
+                        <button type="submit" id="submitBtn" class="w-full py-3 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-medium rounded hover:bg-zinc-800 dark:hover:bg-gray-100 transition-colors">
+                            發布需求並尋找媒合
+                        </button>
+                    </form>
+                </section>
+
+                <section class="h-full flex flex-col">
+                    <h2 class="text-xl font-semibold mb-4 px-1">全校交換大廳 <span id="lobbyCount" class="text-sm font-normal text-gray-500 ml-2"></span></h2>
+                    <div id="lobbyContainer" class="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-8">
+                        </div>
+                </section>
+
+            </div>
+        {% endif %}
+    </main>
+
+    {% if user %}
+    <script>
+        const DORM_GENDER_MAP = {
+            // 女生專屬宿舍 (Female Only)
+            "仰山莊": ["F"], 
+            "涵星一莊": ["F"], 
+            "沁月莊": ["F"], 
+            "行雲二莊": ["F"],
+            "擷雲二莊": ["F"],  
+            
+            // 男生專屬宿舍 (Male Only)
+            "迎曦莊": ["M"], 
+            "涵星二莊": ["M"], 
+            "向晴莊": ["M"], 
+            "行雲一莊": ["M"],
+            "擷雲一莊": ["M"]   
+        };
+
+        const form = document.getElementById('exchangeForm');
+        const genderRadios = document.querySelectorAll('input[name="gender"]');
+        const currentBuildingSelect = document.querySelector('select[name="current_building"]');
+        const targetBuildingsContainer = document.getElementById('targetBuildingsContainer');
+        const submitBtn = document.getElementById('submitBtn');
+        const formMessage = document.getElementById('formMessage');
+        const deleteRequestBtn = document.getElementById('deleteRequestBtn');
+
+        const loadingView = document.getElementById('loadingView');
+        const pendingView = document.getElementById('pendingView');
+        const matchedView = document.getElementById('matchedView');
+        const matchedEmailDisplay = document.getElementById('matchedEmailDisplay');
+        const unmatchBtn = document.getElementById('unmatchBtn');
+        const lobbyContainer = document.getElementById('lobbyContainer');
+        const lobbyCount = document.getElementById('lobbyCount');
+
+        let hasActiveRequest = false;
+        let currentGender = null;
+        let myRequestId = null;
+
+        // 初始化
+        async function init() {
+            await fetchMyStatus();
+            await fetchLobby();
+        }
+
+        // 獲取目前狀態
+        async function fetchMyStatus() {
+            try {
+                const res = await fetch('/api/my_request');
+                const data = await res.json();
+                
+                loadingView.classList.add('hidden');
+
+                if (data.has_request && data.request.status === 'MATCHED') {
+                    pendingView.classList.add('hidden');
+                    matchedView.classList.remove('hidden');
+                    matchedView.classList.add('flex');
+                    matchedEmailDisplay.textContent = data.request.matched_email;
+                    myRequestId = null;
+                } else {
+                    matchedView.classList.add('hidden');
+                    matchedView.classList.remove('flex');
+                    pendingView.classList.remove('hidden');
+
+                    if (data.has_request && data.request.status === 'PENDING') {
+                        hasActiveRequest = true;
+                        currentGender = data.request.gender;
+                        myRequestId = data.request.id;
+                        
+                        const radio = document.querySelector(`input[name="gender"][value="${currentGender}"]`);
+                        if (radio) {
+                            radio.checked = true;
+                            updateBuildings(currentGender);
+                        }
+
+                        deleteRequestBtn.classList.remove('hidden');
+                        submitBtn.textContent = '您已有發布中的需求 (無法重複發布)';
+                        submitBtn.disabled = true;
+                        submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                        
+                        // 鎖定表單
+                        const inputs = form.querySelectorAll('input, select');
+                        inputs.forEach(input => input.disabled = true);
+                        
+                        showMessage('您的需求已發布在大廳。', 'success');
+                    } else {
+                        hasActiveRequest = false;
+                        myRequestId = null;
+                        deleteRequestBtn.classList.add('hidden');
+                        submitBtn.textContent = '發布需求並尋找媒合';
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                        
+                        // 解鎖表單
+                        const inputs = form.querySelectorAll('input, select');
+                        inputs.forEach(input => input.disabled = false);
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to fetch status:", err);
+            }
+        }
+
+        // 手動發送訊息
+        async function sendMessage(reqId) {
+            const msg = prompt("請輸入你想跟對方說的話：", "你好！我對你的換宿需求很感興趣，希望能與你聯繫討論細節。");
+            if (msg === null) return;
+
+            try {
+                const res = await fetch(`/api/requests/${reqId}/message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg })
+                });
+                const result = await res.json();
+                if (res.ok) {
+                    alert('訊息已成功發送至對方信箱！');
+                } else {
+                    alert(result.detail || '發送失敗');
+                }
+            } catch (err) {
+                alert('網路錯誤');
+            }
+        }
+
+        // 獲取大廳資料
+        async function fetchLobby() {
+            try {
+                if (!currentGender) {
+                    lobbyContainer.innerHTML = '<div class="text-center py-10 text-gray-500">請先在左側表單選擇您的性別以查看專屬大廳。</div>';
+                    lobbyCount.textContent = '';
+                    return;
+                }
+
+                const res = await fetch(`/api/requests?gender=${currentGender}`);
+                const data = await res.json();
+                
+                lobbyContainer.innerHTML = '';
+                lobbyCount.textContent = `(${data.length} 筆)`;
+
+                if (data.length === 0) {
+                    lobbyContainer.innerHTML = '<div class="text-center py-10 text-gray-500">目前大廳沒有待交換的需求。</div>';
+                    return;
+                }
+
+                const myRequests = data.filter(req => req.id === myRequestId);
+                const otherRequests = data.filter(req => req.id !== myRequestId);
+
+                const renderRequest = (req, isMine) => {
+                    const el = document.createElement('div');
+                    
+                    el.className = `p-4 border rounded-lg shadow-sm transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${isMine ? 'bg-blue-50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-zinc-800 hover:border-gray-300 dark:hover:border-zinc-600'}`;
+                    
+                    const genderIcon = req.gender === 'M' ? '<span class="text-blue-500 font-bold">男</span>' : '<span class="text-red-500 font-bold">女</span>';
+                    const targetText = req.target_buildings ? req.target_buildings.replace(/,/g, ' / ') : '不拘';
+                    
+                    const timeString = new Date(req.created_at).toLocaleString('zh-TW', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+
+                    el.innerHTML = `
+                        <div class="flex-1">
+                            <div class="flex justify-between items-start mb-2">
+                                <div class="font-medium flex items-center gap-2">
+                                    ${genderIcon} • ${req.current_building}
+                                    ${isMine ? '<span class="text-xs font-semibold px-2 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-800 dark:text-blue-200 rounded">我的需求</span>' : ''}
+                                </div>
+                                <span class="text-xs text-gray-400 sm:hidden">${timeString}</span>
+                            </div>
+                            <div class="text-sm text-gray-600 dark:text-zinc-400 mt-2 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                                尋求：<span class="font-medium text-gray-800 dark:text-zinc-200">${targetText}</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end gap-2 shrink-0">
+                            <span class="hidden sm:inline text-xs text-gray-400">${timeString}</span>
+                            ${!isMine ? `
+                            <button onclick="sendMessage('${req.id}')" class="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-900 rounded text-sm transition-colors shadow-sm">
+                                主動聯絡
+                            </button>
+                            ` : ''}
+                        </div>
+                    `;
+                    return el;
+                };
+
+                myRequests.forEach(req => {
+                    lobbyContainer.appendChild(renderRequest(req, true));
+                });
+
+                if (myRequests.length > 0 && otherRequests.length > 0) {
+                    const separator = document.createElement('div');
+                    separator.className = 'my-4 relative flex items-center';
+                    separator.innerHTML = `
+                        <div class="flex-grow border-t border-gray-200 dark:border-zinc-800"></div>
+                        <span class="flex-shrink-0 mx-4 text-gray-400 text-xs">其他人的需求</span>
+                        <div class="flex-grow border-t border-gray-200 dark:border-zinc-800"></div>
+                    `;
+                    lobbyContainer.appendChild(separator);
+                }
+
+                otherRequests.forEach(req => {
+                    lobbyContainer.appendChild(renderRequest(req, false));
+                });
+            } catch (err) {
+                console.error("Failed to fetch lobby:", err);
+            }
+        }
+
+        // 依據性別更新莊別選項
+        function updateBuildings(gender) {
+            currentBuildingSelect.innerHTML = '<option value="">請選擇莊別</option>';
+            targetBuildingsContainer.innerHTML = '';
+
+            let hasValidBuilding = false;
+
+            Object.entries(DORM_GENDER_MAP).forEach(([building, genders]) => {
+                if (genders.includes(gender)) {
+                    hasValidBuilding = true;
+                    // Current building option
+                    const opt = document.createElement('option');
+                    opt.value = building;
+                    opt.textContent = building;
+                    currentBuildingSelect.appendChild(opt);
+
+                    // Target building checkbox
+                    const label = document.createElement('label');
+                    label.className = 'flex items-center gap-2 cursor-pointer text-sm';
+                    label.innerHTML = `<input type="checkbox" name="target_buildings" value="${building}" class="rounded border-gray-300"> ${building}`;
+                    targetBuildingsContainer.appendChild(label);
+                }
+            });
+
+            if (!hasValidBuilding) {
+                targetBuildingsContainer.innerHTML = '<span class="text-sm text-red-500">此性別無可用莊別</span>';
+            }
+        }
+
+        genderRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const gender = e.target.value;
+                updateBuildings(gender);
+                currentGender = gender;
+                fetchLobby();
+            });
+        });
+
+        // 訊息顯示
+        function showMessage(msg, type = 'error') {
+            formMessage.textContent = msg;
+            formMessage.className = `text-sm p-3 rounded mb-4 block ${type === 'error' ? 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 border border-red-200 dark:border-red-900' : 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400 border border-green-200 dark:border-green-900'}`;
+        }
+
+        // 表單送出
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            formMessage.classList.add('hidden');
+            
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+            
+            // 處理複選框
+            data.target_buildings = formData.getAll('target_buildings');
+            
+            if (data.target_buildings.length === 0) {
+                showMessage('請至少選擇一個目標莊別');
+                return;
+            }
+
+            // 處理可選數字轉型
+            if (data.current_room) data.current_room = parseInt(data.current_room, 10);
+            
+            if (data.target_floor) data.target_floor = parseInt(data.target_floor, 10);
+            else delete data.target_floor;
+
+            if (data.target_room) data.target_room = parseInt(data.target_room, 10);
+            else delete data.target_room;
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '處理中...';
+
+            try {
+                const res = await fetch('/api/requests', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await res.json();
+                
+                if (!res.ok) {
+                    showMessage(result.detail || '發生錯誤');
+                } else {
+                    form.reset();
+                    targetBuildingsContainer.innerHTML = '<span class="text-sm text-gray-500 dark:text-zinc-500">請先選擇性別</span>';
+                    currentBuildingSelect.innerHTML = '<option value="">請先選擇性別</option>';
+                    await init(); // 重新整理狀態
+                    
+                    if (result.status === 'MATCHED') {
+                        // alert('媒合成功！');
+                    } else {
+                        showMessage(result.message, 'success');
+                    }
+                }
+            } catch (err) {
+                showMessage('網路或伺服器錯誤');
+            } finally {
+                if(!hasActiveRequest) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '發布需求並尋找媒合';
+                }
+            }
+        });
+
+        // 刪除請求
+        deleteRequestBtn.addEventListener('click', async () => {
+            if(!confirm('確定要刪除目前發布中的需求嗎？')) return;
+            try {
+                const res = await fetch('/api/requests', { method: 'DELETE' });
+                if (res.ok) {
+                    await init();
+                    showMessage('已刪除您的需求。', 'success');
+                } else {
+                    const result = await res.json();
+                    alert(result.detail || '刪除失敗');
+                }
+            } catch (err) {
+                alert('網路錯誤');
+            }
+        });
+
+        // 解除配對
+        unmatchBtn.addEventListener('click', async () => {
+            if(!confirm('確定要解除配對嗎？您將重新回到大廳尋找對象。')) return;
+            
+            unmatchBtn.disabled = true;
+            unmatchBtn.textContent = '處理中...';
+
+            try {
+                const res = await fetch('/api/unmatch', {
+                    method: 'POST'
+                });
+                if (res.ok) {
+                    await init();
+                } else {
+                    const result = await res.json();
+                    alert(result.detail || '解除配對失敗');
+                    unmatchBtn.disabled = false;
+                    unmatchBtn.textContent = '解除配對並重新尋找';
+                }
+            } catch (err) {
+                alert('網路錯誤');
+                unmatchBtn.disabled = false;
+                unmatchBtn.textContent = '解除配對並重新尋找';
+            }
+        });
+
+        // 啟動
+        init();
+
+        // 設定定時更新大廳 (每 15 秒)
+        setInterval(fetchLobby, 15000);
+
+        // 閒置 10 分鐘自動登出邏輯
+        let idleTimeout;
+        const IDLE_LIMIT = 10 * 60 * 1000; // 10 分鐘 (毫秒)
+
+        function resetIdleTimeout() {
+            clearTimeout(idleTimeout);
+            idleTimeout = setTimeout(() => {
+                alert('您已閒置超過 10 分鐘，系統將自動登出以保護帳號安全。');
+                window.location.href = '/logout';
+            }, IDLE_LIMIT);
+        }
+
+        // 監聽各種使用者操作以重置閒置計時器
+        ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
+            document.addEventListener(evt, resetIdleTimeout, true);
+        });
+
+        // 初始化計時器
+        resetIdleTimeout();
+    </script>
+    {% endif %}
+</body>
+</html>
