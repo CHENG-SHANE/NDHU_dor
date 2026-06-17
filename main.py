@@ -76,81 +76,11 @@ DORM_GENDER_MAP = {
 
 # --- 寄信功能 ---
 def send_match_email(to_email: str, partner_email: str):
-    if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD]):
-        print(f"SMTP 設定未完成，跳過寄送 Email 給 {to_email}")
-        return
-
-    subject = "【東華宿舍智慧交換系統】媒合成功通知"
-    body = f"""同學您好，
-
-恭喜您！系統已幫您成功媒合到換宿夥伴。
-對方的聯絡信箱為：{partner_email}
-
-請主動透過此信箱與對方同學聯繫，協調後續換宿細節。
-祝您換宿順利！
-
-（此為系統自動發送之信件，請勿直接回覆）
-宿舍交換系統 敬上
-(請注意，該系統由東華大學學生開發，不能代表國立東華大學官方)
-"""
-    msg = MIMEMultipart()
-    msg['From'] = SMTP_USERNAME
-    msg['To'] = to_email
-    msg['Subject'] = Header(subject, 'utf-8')
-    msg.attach(MIMEText(body, 'plain', 'utf-8'))
-
-    try:
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"成功寄送媒合通知信給：{to_email}")
-    except Exception as e:
-        print(f"寄送信件至 {to_email} 失敗：{e}")
+    print(f"[EmailJS 轉接] 應寄送媒合信給 {to_email}，已交由前端觸發。")
 
 
 def send_manual_message_email(to_email: str, sender_email: str, building: str, room: str, message: str):
-    if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD]):
-        print(f"SMTP 設定未完成，跳過寄送 Email 給 {to_email}")
-        return
-
-    subject = "【東華宿舍智慧交換系統】有人對您的換宿需求感興趣！"
-    body = f"""同學您好，
-
-有同學在宿舍交換大廳看到了您的換宿需求。
-您的刊登資料如下：
-住宿莊別：{building}
-住宿房號：{room}
-
-對方的聯絡信箱為：{sender_email}
-
-以下為該同學留下的備註訊息：
---------------------------------------------------
-{message}
---------------------------------------------------
-
-如果您亦有意願與該同學交換，請直接透過上方提供的信箱（{sender_email}）與對方聯繫。
-
-（此為系統自動發送之信件，請勿直接回覆）
-宿舍交換系統 敬上
-(請注意，該系統由東華大學學生開發，不能代表國立東華大學官方)
-"""
-    msg = MIMEMultipart()
-    msg['From'] = SMTP_USERNAME
-    msg['To'] = to_email
-    msg['Subject'] = Header(subject, 'utf-8')
-    msg.attach(MIMEText(body, 'plain', 'utf-8'))
-
-    try:
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"成功寄送手動聯絡信給：{to_email}")
-    except Exception as e:
-        print(f"寄送信件至 {to_email} 失敗：{e}")
+    print(f"[EmailJS 轉接] 應寄送手動聯絡信給 {to_email}，已交由前端觸發。")
 
 
 # Dependency to get DB session
@@ -190,6 +120,7 @@ class PublicExchangeRequest(BaseModel):
     current_building: str
     target_buildings: str
     created_at: datetime
+    user_email: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -256,6 +187,8 @@ def get_requests(
         ExchangeRequest.status == "PENDING",
         ExchangeRequest.gender == gender
     ).order_by(ExchangeRequest.created_at.desc()).limit(limit).all()
+    for r in requests:
+        r.user_email = r.user.email
     return requests
 
 @app.post("/api/requests/{req_id}/message")

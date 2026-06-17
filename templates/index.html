@@ -22,6 +22,12 @@
             scrollbar-width: none;
         }
     </style>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+    <script type="text/javascript">
+       (function(){
+          emailjs.init("iBhON3BgYrQ4I8NnV"); // 預留位置
+       })();
+    </script>
 </head>
 <body class="bg-gray-50 dark:bg-zinc-950 text-gray-800 dark:text-zinc-200 min-h-screen font-sans transition-colors duration-200">
 
@@ -82,7 +88,7 @@
                                     <input type="radio" name="gender" value="F" class="text-blue-600" required> 女
                                 </label>
                             </div>
-                            <p class="text-xs text-red-500 font-medium tracking-wide mt-1">⚠️ 請注意：性別一經選定並送出後將永久綁定，後續無法更改。</p>
+                            <p class="text-xs text-red-500 font-medium tracking-wide mt-1">⚠️注意：性別一經選定並送出後將永久綁定，後續無法更改。</p>
                         </div>
 
                         <div class="p-4 bg-gray-50 dark:bg-zinc-950 border border-gray-100 dark:border-zinc-800 rounded-lg space-y-4">
@@ -217,7 +223,6 @@
         let currentGender = null;
         let myRequestId = null;
 
-        // 🌟 新增：用於暫存準備送出的表單資料
         let pendingSubmitData = null;
 
         async function init() {
@@ -280,24 +285,47 @@
             }
         }
 
-        async function sendMessage(reqId) {
+        async function sendMessage(reqId, btnElement) {
             const msg = prompt("請輸入你想跟對方說的話：", "你好！我對你的換宿需求很感興趣，希望能與你聯繫討論細節。");
             if (msg === null) return;
 
+            const card = btnElement.closest('[data-user-email]');
+            const toEmail = card.getAttribute('data-user-email');
+            
+            const buildingNode = card.querySelector('.font-medium');
+            let building = '';
+            if (buildingNode) {
+                const parts = buildingNode.textContent.split('•');
+                if (parts.length > 1) {
+                    building = parts[1].trim().split('\n')[0].trim();
+                }
+            }
+
+            const templateParams = {
+                to_email: toEmail,
+                sender_email: '{{ user.email }}',
+                building: building,
+                room: "大廳刊登房號",
+                message: msg
+            };
+
             try {
-                const res = await fetch(`/api/requests/${reqId}/message`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: msg })
-                });
-                const result = await res.json();
-                if (res.ok) {
-                    alert('訊息已成功發送至對方信箱！');
-                } else {
-                    alert(result.detail || '發送失敗');
+                const emailRes = await emailjs.send('service_g1284is', 'template_51xf1sp', templateParams);
+                if (emailRes.status === 200) {
+                    const res = await fetch(`/api/requests/${reqId}/message`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: "[透過 EmailJS 發送]" })
+                    });
+                    const result = await res.json();
+                    if (res.ok) {
+                        alert('訊息已成功發送至對方信箱！');
+                    } else {
+                        alert(result.detail || '發送失敗');
+                    }
                 }
             } catch (err) {
-                alert('網路錯誤');
+                alert('發信失敗，請稍後再試或聯繫管理員');
             }
         }
 
@@ -326,6 +354,7 @@
                 const renderRequest = (req, isMine) => {
                     const el = document.createElement('div');
                     el.className = `p-4 border rounded-lg shadow-sm transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${isMine ? 'bg-blue-50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-zinc-800 hover:border-gray-300 dark:hover:border-zinc-600'}`;
+                    el.setAttribute('data-user-email', req.user_email);
                     
                     const genderIcon = req.gender === 'M' ? '<span class="text-blue-500 font-bold">男</span>' : '<span class="text-red-500 font-bold">女</span>';
                     const targetText = req.target_buildings ? req.target_buildings.replace(/,/g, ' / ') : '不拘';
@@ -348,7 +377,7 @@
                         <div class="flex flex-col items-end gap-2 shrink-0">
                             <span class="hidden sm:inline text-xs text-gray-400">${timeString}</span>
                             ${!isMine ? `
-                            <button onclick="sendMessage('${req.id}')" class="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-900 rounded text-sm transition-colors shadow-sm">
+                            <button onclick="sendMessage('${req.id}', this)" class="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-900 rounded text-sm transition-colors shadow-sm">
                                 主動聯絡
                             </button>
                             ` : ''}
@@ -461,13 +490,11 @@
             document.getElementById('genderConfirmModal').classList.remove('hidden');
         });
 
-        // 🌟 處理 Modal 的取消按鈕
         document.getElementById('cancelSubmitBtn').addEventListener('click', () => {
             document.getElementById('genderConfirmModal').classList.add('hidden');
             pendingSubmitData = null; // 清空暫存
         });
 
-        // 🌟 處理 Modal 的確認發布按鈕 (真正打 API 的地方)
         document.getElementById('confirmSubmitBtn').addEventListener('click', async () => {
             document.getElementById('genderConfirmModal').classList.add('hidden');
             
@@ -493,7 +520,19 @@
                     currentBuildingSelect.innerHTML = '<option value="">請先選擇性別</option>';
                     await init(); 
                     
-                    if (result.status !== 'MATCHED') {
+                    if (result.status === 'MATCHED') {
+                        // EmailJS 信件一：寄給自己
+                        emailjs.send('service_g1284is', 'template_auv5ufi', {
+                            to_email: '{{ user.email }}',
+                            partner_email: result.matched_email
+                        });
+                        
+                        // EmailJS 信件二：寄給對方
+                        emailjs.send('service_g1284is', 'template_auv5ufi', {
+                            to_email: result.matched_email,
+                            partner_email: '{{ user.email }}'
+                        });
+                    } else {
                         showMessage(result.message, 'success');
                     }
                 }
