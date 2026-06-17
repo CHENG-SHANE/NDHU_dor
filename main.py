@@ -125,7 +125,7 @@ class PublicExchangeRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class SendMessageData(BaseModel):
-    message: str = Field(..., max_length=500, description="發送給對方的訊息，限制500字以內")
+    message: str = Field(..., max_length=100, description="發送給對方的訊息，限制100字以內")
 
 
 # --- Routes ---
@@ -231,12 +231,12 @@ def send_manual_message(
     )
     
     current_user.last_message_sent_at = datetime.utcnow()
-    
-    # 🌟 新增：累計大廳主動聯絡次數
+
+    #累計大廳主動聯絡次數
     stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
     if stat:
         stat.total_contacts += 1
-        
+
     db.commit()
     
     return {"message": "已成功發送訊息給對方"}
@@ -249,14 +249,14 @@ def create_exchange_request(
     current_user: User = Depends(require_auth)
 ):
     try:
-        # 1. 併發防護：鎖定 User 級別，確保狀態安全
+        # 併發防護
         db.query(User).filter(User.id == current_user.id).with_for_update().first()
         
-        # 2. 核心自動化：性別綁定與檢查
+        # 性別綁定
         user_gender = current_user.gender
         
         if not user_gender:
-            # 資料庫沒資料 -> 這是該用戶第一次發布需求，進行一生一次的性別鎖定
+            # 資料庫沒資料 -> 性別鎖定
             if not req.gender or req.gender not in ["M", "F"]:
                 raise HTTPException(status_code=400, detail="首次發布必須選擇有效的性別進行綁定")
             
@@ -296,7 +296,7 @@ def create_exchange_request(
         if existing_req:
             raise HTTPException(status_code=400, detail="您已有進行中的請求，請先解除配對或刪除該請求")
 
-        # 5. 進行媒合比對
+        # 進行媒合比對
         matched_candidate = None
         candidates = db.query(ExchangeRequest).filter(
             ExchangeRequest.status == "PENDING",
@@ -325,15 +325,17 @@ def create_exchange_request(
             matched_candidate = candidate
             break
             
-        # 🌟 新增：累計刊登筆數 (只要成功建立請求就 +1)
+            #累計刊登次數
         stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
         if stat:
             stat.total_postings += 1
 
+
         if matched_candidate:
-            # 🌟 新增：累計自動媒合成功人數 (每次成功媒合代表 2 人)
+            #累計媒合次數
             if stat:
-                stat.total_matches += 2
+                stat.total_matches += 2  # 雙方都算一次
+
 
             current_user_email = str(current_user.email)
             partner_email = str(matched_candidate.user.email)
@@ -401,7 +403,7 @@ def unmatch_request(db: Session = Depends(get_db), current_user: User = Depends(
             
         partner_id = user_req.matched_with_id
         
-        # 2. 鎖定對方的請求
+        # 鎖定對方的請求
         partner_req = db.query(ExchangeRequest).filter(
             ExchangeRequest.user_id == partner_id,
             ExchangeRequest.status == "MATCHED",
@@ -466,11 +468,11 @@ def delete_request(db: Session = Depends(get_db), current_user: User = Depends(r
 
 @app.get("/api/stats")
 def get_exchange_stats(db: Session = Depends(get_db)):
-    stats = db.query(SystemStat).filter(SystemStat.id == 1).first()
-    if not stats:
+    stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
+    if not stat:
         return {"total_postings": 0, "total_matches": 0, "total_contacts": 0}
     return {
-        "total_postings": stats.total_postings,
-        "total_matches": stats.total_matches,
-        "total_contacts": stats.total_contacts
+        "total_postings": stat.total_postings,
+        "total_matches": stat.total_matches,
+        "total_contacts": stat.total_contacts
     }
