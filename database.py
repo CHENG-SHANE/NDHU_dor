@@ -29,38 +29,37 @@ def generate_uuid():
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(String, primary_key=True, default=generate_uuid)
-    email = Column(String, unique=True, index=True)
-    name = Column(String, nullable=True)
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    email = Column(String(100), unique=True, index=True)
+    name = Column(String(100), nullable=True)
     
-    # [新增] 將性別綁定於使用者帳號，防止發送請求時遭到惡意竄改
-    gender = Column(String, nullable=True) 
+    # 將性別綁定於使用者帳號，防止發送請求時遭到惡意竄改
+    gender = Column(String(10), nullable=True) 
     
     last_message_sent_at = Column(DateTime, nullable=True)
     requests = relationship("ExchangeRequest", back_populates="user")
 
 class ExchangeRequest(Base):
     __tablename__ = "exchange_requests"
-    id = Column(String, primary_key=True, default=generate_uuid)
-    user_id = Column(String, ForeignKey("users.id"))
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id"))
+
+    gender = Column(String(10), index=True)
     
-    # 這裡保留 gender 欄位是為了提升大廳列表與媒合時的查詢效能
-    # 但在寫入時，後端會強制讀取 User.gender 的值來填寫
-    gender = Column(String)
+    current_building = Column(String(50))
+    current_floor = Column(Integer)   
+    current_room = Column(Integer)    
+    current_bed = Column(String(10))      
     
-    current_building = Column(String)
-    current_floor = Column(Integer)   # 後端程式自動從 current_room 推導寫入
-    current_room = Column(Integer)    # 三或四位數字
-    current_bed = Column(String)      
-    
-    target_buildings = Column(String) 
+    target_buildings = Column(String(255)) 
     target_floor = Column(Integer, nullable=True)
     target_room = Column(Integer, nullable=True) 
     
-    status = Column(String, default="PENDING")
-    matched_with_id = Column(String, nullable=True)
-    matched_email = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), default="PENDING", index=True)
+    matched_with_id = Column(String(36), nullable=True)
+    matched_email = Column(String(100), nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("User", back_populates="requests")
 
