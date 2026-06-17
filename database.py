@@ -47,13 +47,16 @@ class ExchangeRequest(Base):
     gender = Column(String(10), index=True)
     
     current_building = Column(String(50))
+    current_block = Column(String(10), nullable=True) # 棟號
     current_floor = Column(Integer)   
     current_room = Column(Integer)    
-    current_bed = Column(String(10))      
+    current_bed = Column(String(10), nullable=True)   # 床號改為可選 (配合擷雲莊)
     
     target_buildings = Column(String(255)) 
     target_floor = Column(Integer, nullable=True)
     target_room = Column(Integer, nullable=True) 
+    
+    comment = Column(String(30), nullable=True) # 備註留言
     
     status = Column(String(20), default="PENDING", index=True)
     matched_with_id = Column(String(36), nullable=True)

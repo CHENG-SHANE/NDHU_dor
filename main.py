@@ -59,25 +59,24 @@ oauth.register(
 
 templates = Jinja2Templates(directory="templates")
 
-# 宿舍性別分流
+# 宿舍性別分流 (已將擷雲莊改為男女皆可)
 DORM_GENDER_MAP = {
     "仰山莊": ["F"], 
     "涵星一莊": ["F"], 
     "沁月莊": ["F"], 
     "行雲二莊": ["F"],
-    "擷雲二莊": ["F"],  
+    "擷雲二莊": ["M", "F"],  
     
     "迎曦莊": ["M"], 
     "涵星二莊": ["M"], 
     "向晴莊": ["M"], 
     "行雲一莊": ["M"],
-    "擷雲一莊": ["M"]   
+    "擷雲一莊": ["M", "F"]   
 }
 
 # --- 寄信功能 ---
 def send_match_email(to_email: str, partner_email: str):
     print(f"[EmailJS 轉接] 應寄送媒合信給 {to_email}，已交由前端觸發。")
-
 
 def send_manual_message_email(to_email: str, sender_email: str, building: str, room: str, message: str):
     print(f"[EmailJS 轉接] 應寄送手動聯絡信給 {to_email}，已交由前端觸發。")
@@ -91,7 +90,6 @@ def get_db():
     finally:
         db.close()
 
-# Dependency to get current user
 def get_current_user(request: Request, db: Session = Depends(get_db)):
     user_id = request.session.get("user_id")
     if not user_id:
@@ -107,20 +105,24 @@ def require_auth(user: User = Depends(get_current_user)):
 # --- Pydantic Models ---
 class CreateRequest(BaseModel):
     current_building: str
+    current_block: Optional[str] = None  # 棟號
     current_room: int
-    current_bed: str
+    current_bed: Optional[str] = None    # 床號改選填
     target_buildings: List[str]
-    gender: Optional[str] = None  # 允許首次綁定時傳遞，之後由系統忽略並強制覆蓋
+    gender: Optional[str] = None
     target_floor: Optional[int] = None
     target_room: Optional[int] = None
+    comment: Optional[str] = Field(None, max_length=30)
 
 class PublicExchangeRequest(BaseModel):
     id: str
     gender: str
     current_building: str
+    current_block: Optional[str] = None
     target_buildings: str
     created_at: datetime
     user_email: Optional[str] = None
+    comment: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -232,7 +234,6 @@ def send_manual_message(
     
     current_user.last_message_sent_at = datetime.utcnow()
 
-    # 累計大廳主動聯絡次數
     stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
     if stat:
         stat.total_contacts += 1
@@ -249,23 +250,18 @@ def create_exchange_request(
     current_user: User = Depends(require_auth)
 ):
     try:
-        # 併發防護
         db.query(User).filter(User.id == current_user.id).with_for_update().first()
         
-        # 性別綁定
         user_gender = current_user.gender
         
         if not user_gender:
-            # 資料庫沒資料 -> 性別鎖定
             if not req.gender or req.gender not in ["M", "F"]:
                 raise HTTPException(status_code=400, detail="首次發布必須選擇有效的性別進行綁定")
             
-            # 寫入資料庫，從此鎖死
             current_user.gender = req.gender
             db.commit()
             user_gender = req.gender
             
-        # 3. 莊別與房號驗證（完全信任並使用資料庫的 user_gender，嚴格 3 碼房號）
         if req.current_building not in DORM_GENDER_MAP or user_gender not in DORM_GENDER_MAP[req.current_building]:
             raise HTTPException(status_code=400, detail="目前莊別與您的性別不符")
             
@@ -287,7 +283,16 @@ def create_exchange_request(
             if not re.match(r"^\d{3}$", target_room_str):
                 raise HTTPException(status_code=400, detail="目標房號必須為三位數字")
 
-        # 4. 檢查是否有重複處理中的訂單
+        # 針對擷雲莊進行棟號與床號驗證
+        if req.current_building in ["擷雲一莊", "擷雲二莊"]:
+            if not req.current_block:
+                raise HTTPException(status_code=400, detail="擷雲莊必須選擇棟號")
+            req.current_bed = None # 擷雲莊強制清空床號
+        else:
+            if not req.current_bed:
+                raise HTTPException(status_code=400, detail="請選擇床號")
+            req.current_block = None # 一般莊別強制清空棟號
+
         existing_req = db.query(ExchangeRequest).filter(
             ExchangeRequest.user_id == current_user.id,
             ExchangeRequest.status.in_(["PENDING", "MATCHED"])
@@ -296,7 +301,6 @@ def create_exchange_request(
         if existing_req:
             raise HTTPException(status_code=400, detail="您已有進行中的請求，請先解除配對或刪除該請求")
 
-        # 進行媒合比對
         matched_candidate = None
         candidates = db.query(ExchangeRequest).filter(
             ExchangeRequest.status == "PENDING",
@@ -325,11 +329,9 @@ def create_exchange_request(
             matched_candidate = candidate
             break
             
-        # 🌟 修正點：將 SystemStat 的查詢與設定正確移出 for 迴圈外
         stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
 
         if matched_candidate:
-            # 累計自動媒合人數 +2 (雙方同學都算完成)
             if stat:
                 stat.total_matches += 2
 
@@ -340,12 +342,14 @@ def create_exchange_request(
                 user_id=current_user.id,
                 gender=user_gender,
                 current_building=req.current_building,
+                current_block=req.current_block,
                 current_floor=current_floor,
                 current_room=req.current_room,
                 current_bed=req.current_bed,
                 target_buildings=target_buildings_str,
                 target_floor=req.target_floor,
                 target_room=req.target_room,
+                comment=req.comment,
                 status="MATCHED",
                 matched_with_id=matched_candidate.user_id,
                 matched_email=partner_email
@@ -363,7 +367,6 @@ def create_exchange_request(
 
             return {"status": "MATCHED", "message": "match成功!", "matched_email": partner_email}
         else:
-            # 🌟 優化點：只有在沒媒合成功、卡片真正掛到大廳時，才算一筆累積刊登總數
             if stat:
                 stat.total_postings += 1
 
@@ -371,12 +374,14 @@ def create_exchange_request(
                 user_id=current_user.id,
                 gender=user_gender,
                 current_building=req.current_building,
+                current_block=req.current_block,
                 current_floor=current_floor,
                 current_room=req.current_room,
                 current_bed=req.current_bed,
                 target_buildings=target_buildings_str,
                 target_floor=req.target_floor,
                 target_room=req.target_room,
+                comment=req.comment,
                 status="PENDING"
             )
             db.add(new_req)
@@ -392,7 +397,6 @@ def create_exchange_request(
 @app.post("/api/unmatch")
 def unmatch_request(db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
     try:
-        # 1. 併發防護：先鎖定當前使用者的請求
         user_req = db.query(ExchangeRequest).filter(
             ExchangeRequest.user_id == current_user.id,
             ExchangeRequest.status == "MATCHED"
@@ -403,14 +407,12 @@ def unmatch_request(db: Session = Depends(get_db), current_user: User = Depends(
             
         partner_id = user_req.matched_with_id
         
-        # 鎖定對方的請求
         partner_req = db.query(ExchangeRequest).filter(
             ExchangeRequest.user_id == partner_id,
             ExchangeRequest.status == "MATCHED",
             ExchangeRequest.matched_with_id == current_user.id
         ).with_for_update().first()
         
-        # 3. 執行狀態重置
         user_req.status = "PENDING"
         user_req.matched_with_id = None
         user_req.matched_email = None
@@ -448,9 +450,11 @@ def get_my_request(db: Session = Depends(get_db), current_user: User = Depends(r
             "gender": req.gender,
             "matched_email": req.matched_email,
             "current_building": req.current_building,
+            "current_block": req.current_block,
             "current_room": req.current_room,
             "target_buildings": req.target_buildings,
-            "created_at": req.created_at
+            "created_at": req.created_at,
+            "comment": req.comment
         }
     }
 

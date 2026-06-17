@@ -94,18 +94,24 @@
                         <div class="p-4 bg-gray-50 dark:bg-zinc-950 border border-gray-100 dark:border-zinc-800 rounded-lg space-y-4">
                             <h3 class="text-sm font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">目前狀態 (必填)</h3>
                             
-                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
                                 <div>
                                     <label class="block text-sm font-medium mb-1">莊別</label>
                                     <select name="current_building" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
                                         <option value="">請先選擇性別</option>
                                     </select>
                                 </div>
+                                <div id="blockWrapper" class="hidden">
+                                    <label class="block text-sm font-medium mb-1">棟號</label>
+                                    <select name="current_block" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+                                        <option value="">請選擇</option>
+                                    </select>
+                                </div>
                                 <div>
                                     <label class="block text-sm font-medium mb-1">房號</label>
                                     <input type="text" name="current_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="三碼數字 (例: 205)" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
                                 </div>
-                                <div>
+                                <div id="bedWrapper">
                                     <label class="block text-sm font-medium mb-1">床號</label>
                                     <select name="current_bed" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
                                         <option value="1">1 號床</option>
@@ -141,6 +147,13 @@
                                     <label class="block text-sm font-medium mb-1">目標房號 (選填)</label>
                                     <input type="text" name="target_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="三碼數字 (例: 205)" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
                                 </div>
+                            </div>
+                        </div>
+
+                        <div class="p-4 bg-gray-50 dark:bg-zinc-950 border border-gray-100 dark:border-zinc-800 rounded-lg space-y-4">
+                            <h3 class="text-sm font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">備註留言 (選填)</h3>
+                            <div>
+                                <input type="text" name="comment" maxlength="30" placeholder="想對大家說些什麼呢？（最多 30 字）" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-sm">
                             </div>
                         </div>
 
@@ -191,13 +204,13 @@
             "涵星一莊": ["F"], 
             "沁月莊": ["F"], 
             "行雲二莊": ["F"],
-            "擷雲二莊": ["F"],  
+            "擷雲二莊": ["M", "F"],  // 男女不拘
             
             "迎曦莊": ["M"], 
             "涵星二莊": ["M"], 
             "向晴莊": ["M"], 
             "行雲一莊": ["M"],
-            "擷雲一莊": ["M"]   
+            "擷雲一莊": ["M", "F"]   // 男女不拘
         };
 
         const form = document.getElementById('exchangeForm');
@@ -207,6 +220,11 @@
         const submitBtn = document.getElementById('submitBtn');
         const formMessage = document.getElementById('formMessage');
         const deleteRequestBtn = document.getElementById('deleteRequestBtn');
+
+        const blockWrapper = document.getElementById('blockWrapper');
+        const currentBlockSelect = document.querySelector('select[name="current_block"]');
+        const bedWrapper = document.getElementById('bedWrapper');
+        const currentBedSelect = document.querySelector('select[name="current_bed"]');
 
         const loadingView = document.getElementById('loadingView');
         const pendingView = document.getElementById('pendingView');
@@ -221,6 +239,37 @@
         let myRequestId = null;
 
         let pendingSubmitData = null;
+
+        // 當改變莊別時，動態切換棟號/床號
+        currentBuildingSelect.addEventListener('change', (e) => {
+            const building = e.target.value;
+            currentBlockSelect.innerHTML = '<option value="">請選擇</option>';
+            
+            if (building === '擷雲一莊' || building === '擷雲二莊') {
+                blockWrapper.classList.remove('hidden');
+                currentBlockSelect.required = true;
+                
+                bedWrapper.classList.add('hidden');
+                currentBedSelect.required = false;
+                currentBedSelect.value = '';
+
+                const prefix = building === '擷雲一莊' ? 'A' : 'B';
+                for (let i = 1; i <= 10; i++) {
+                    const opt = document.createElement('option');
+                    opt.value = `${prefix}${i}`;
+                    opt.textContent = `${prefix}${i} 棟`;
+                    currentBlockSelect.appendChild(opt);
+                }
+            } else {
+                blockWrapper.classList.add('hidden');
+                currentBlockSelect.required = false;
+                currentBlockSelect.value = '';
+
+                bedWrapper.classList.remove('hidden');
+                currentBedSelect.required = true;
+                if(!currentBedSelect.value) currentBedSelect.value = '1';
+            }
+        });
 
         async function init() {
             await fetchMyStatus();
@@ -356,20 +405,29 @@
                     const genderIcon = req.gender === 'M' ? '<span class="text-blue-500 font-bold">男</span>' : '<span class="text-red-500 font-bold">女</span>';
                     const targetText = req.target_buildings ? req.target_buildings.replace(/,/g, ' / ') : '不拘';
                     const timeString = new Date(req.created_at).toLocaleString('zh-TW', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+                    
+                    // 若有棟號則合併顯示
+                    const blockDisplay = req.current_block ? ` ${req.current_block}棟` : '';
 
                     el.innerHTML = `
                         <div class="flex-1">
                             <div class="flex justify-between items-start mb-2">
                                 <div class="font-medium flex items-center gap-2">
-                                    ${genderIcon} • ${req.current_building}
+                                    ${genderIcon} • ${req.current_building}${blockDisplay}
                                     ${isMine ? '<span class="text-xs font-semibold px-2 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-800 dark:text-blue-200 rounded">我的需求</span>' : ''}
                                 </div>
                                 <span class="text-xs text-gray-400 sm:hidden">${timeString}</span>
                             </div>
                             <div class="text-sm text-gray-600 dark:text-zinc-400 mt-2 flex items-center gap-2">
-                                <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                                <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
                                 尋求：<span class="font-medium text-gray-800 dark:text-zinc-200">${targetText}</span>
                             </div>
+                            ${req.comment ? `
+                            <div class="mt-3 p-2 bg-gray-100 dark:bg-zinc-800/50 rounded-md text-sm text-gray-700 dark:text-zinc-300 flex items-start gap-2">
+                                <span class="text-gray-400 shrink-0">💬</span>
+                                <span>${req.comment}</span>
+                            </div>
+                            ` : ''}
                         </div>
                         <div class="flex flex-col items-end gap-2 shrink-0">
                             <span class="hidden sm:inline text-xs text-gray-400">${timeString}</span>
@@ -409,6 +467,13 @@
         function updateBuildings(gender) {
             currentBuildingSelect.innerHTML = '<option value="">請選擇莊別</option>';
             targetBuildingsContainer.innerHTML = '';
+            
+            // 重置棟號狀態
+            blockWrapper.classList.add('hidden');
+            currentBlockSelect.required = false;
+            currentBlockSelect.value = '';
+            bedWrapper.classList.remove('hidden');
+            currentBedSelect.required = true;
 
             let hasValidBuilding = false;
 
@@ -446,7 +511,6 @@
             formMessage.className = `text-sm p-3 rounded mb-4 block ${type === 'error' ? 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 border border-red-200 dark:border-red-900' : 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400 border border-green-200 dark:border-green-900'}`;
         }
 
-        // 🌟 攔截表單送出事件，改為觸發 Modal
         form.addEventListener('submit', (e) => {
             e.preventDefault();
             formMessage.classList.add('hidden');
@@ -476,20 +540,20 @@
             if (data.target_room) data.target_room = parseInt(data.target_room, 10);
             else delete data.target_room;
 
-            // 暫存驗證過的表單資料
+            // 清理多餘欄位，避免空字串影響後端邏輯
+            if (!data.current_block) delete data.current_block;
+            if (!data.current_bed) delete data.current_bed;
+
             pendingSubmitData = data;
 
-            // 更新 Modal 中的性別文字
             const displayGender = data.gender === 'M' ? '男生' : '女生';
             document.getElementById('modalGenderDisplay').textContent = displayGender;
-            
-            // 顯示確認提示框
             document.getElementById('genderConfirmModal').classList.remove('hidden');
         });
 
         document.getElementById('cancelSubmitBtn').addEventListener('click', () => {
             document.getElementById('genderConfirmModal').classList.add('hidden');
-            pendingSubmitData = null; // 清空暫存
+            pendingSubmitData = null; 
         });
 
         document.getElementById('confirmSubmitBtn').addEventListener('click', async () => {
@@ -515,16 +579,17 @@
                     form.reset();
                     targetBuildingsContainer.innerHTML = '<span class="text-sm text-gray-500 dark:text-zinc-500">請先選擇性別</span>';
                     currentBuildingSelect.innerHTML = '<option value="">請先選擇性別</option>';
+                    blockWrapper.classList.add('hidden');
+                    bedWrapper.classList.remove('hidden');
+                    
                     await init(); 
                     
                     if (result.status === 'MATCHED') {
-                        // EmailJS 信件一：寄給自己
                         emailjs.send('service_g1284is', 'template_auv5ufi', {
                             to_email: '{{ user.email }}',
                             partner_email: result.matched_email
                         });
                         
-                        // EmailJS 信件二：寄給對方
                         emailjs.send('service_g1284is', 'template_auv5ufi', {
                             to_email: result.matched_email,
                             partner_email: '{{ user.email }}'
