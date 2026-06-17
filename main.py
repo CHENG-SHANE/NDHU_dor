@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from database import SessionLocal, User, ExchangeRequest
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 load_dotenv()
 
@@ -28,9 +29,21 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
-# Session Middleware
-secret_key = os.getenv("SECRET_KEY", "dev-secret-key-please-change-in-prod")
-app.add_middleware(SessionMiddleware, secret_key=secret_key)
+# --- Session Middleware 安全強化 ---
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+secret_key = os.getenv("SECRET_KEY")
+
+if not secret_key or secret_key == "dev-secret-key-please-change-in-prod":
+    if ENVIRONMENT == "production":
+        raise RuntimeError("CRITICAL: 生產環境缺少有效的 SECRET_KEY！請在 .env 中設定。")
+    secret_key = "dev-secret-key-please-change-in-prod"
+
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=secret_key,
+    same_site="lax",
+    https_only=(ENVIRONMENT == "production")
+)
 
 # OAuth
 oauth = OAuth()
@@ -63,7 +76,6 @@ DORM_GENDER_MAP = {
 
 # --- 寄信功能 ---
 def send_match_email(to_email: str, partner_email: str):
-    """寄送媒合成功通知信給指定同學"""
     if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD]):
         print(f"SMTP 設定未完成，跳過寄送 Email 給 {to_email}")
         return
@@ -81,7 +93,6 @@ def send_match_email(to_email: str, partner_email: str):
 宿舍交換系統 敬上
 (請注意，該系統由東華大學學生開發，不能代表國立東華大學官方)
 """
-
     msg = MIMEMultipart()
     msg['From'] = SMTP_USERNAME
     msg['To'] = to_email
@@ -98,15 +109,13 @@ def send_match_email(to_email: str, partner_email: str):
     except Exception as e:
         print(f"寄送信件至 {to_email} 失敗：{e}")
 
+
 def send_manual_message_email(to_email: str, sender_email: str, building: str, room: str, message: str):
-    """寄送手動聯絡的通知信（官方固定格式，用戶訊息被完全隔離在指定區塊內）"""
     if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD]):
         print(f"SMTP 設定未完成，跳過寄送 Email 給 {to_email}")
         return
 
     subject = "【東華宿舍智慧交換系統】有人對您的換宿需求感興趣！"
-    
-    # 官方描述皆為固定不可調用的字串，使用者輸入的 message 僅作純文字嵌入
     body = f"""同學您好，
 
 有同學在宿舍交換大廳看到了您的換宿需求。
@@ -167,11 +176,11 @@ def require_auth(user: User = Depends(get_current_user)):
 
 # --- Pydantic Models ---
 class CreateRequest(BaseModel):
-    gender: str
     current_building: str
     current_room: int
     current_bed: str
     target_buildings: List[str]
+    gender: Optional[str] = None  # 允許首次綁定時傳遞，之後由系統忽略並強制覆蓋
     target_floor: Optional[int] = None
     target_room: Optional[int] = None
 
@@ -186,6 +195,7 @@ class PublicExchangeRequest(BaseModel):
 
 class SendMessageData(BaseModel):
     message: str = Field(..., max_length=500, description="發送給對方的訊息，限制500字以內")
+
 
 # --- Routes ---
 @app.get("/", response_class=HTMLResponse)
@@ -211,7 +221,6 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     email = user_info.get("email")
     name = user_info.get("name")
     
-    # 建立或取得使用者
     user = db.query(User).filter(User.email == email).first()
     if not user:
         user = User(email=email, name=name)
@@ -219,7 +228,6 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
 
-    # 記錄登入狀態
     request.session["user_id"] = user.id
     return RedirectResponse(url="/")
 
@@ -238,11 +246,9 @@ def get_requests(
     db: Session = Depends(get_db), 
     current_user: User = Depends(require_auth)
 ):
-    """取得隱私大廳清單，強制套用 PublicExchangeRequest 避免個資外洩，並依據性別過濾，限制回傳數量"""
     if not gender:
         return []
         
-    # 限制最大可查詢數量，防止惡意請求過大
     if limit > 100:
         limit = 100
 
@@ -260,8 +266,6 @@ def send_manual_message(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_auth)
 ):
-    """手動發送訊息給感興趣的刊登者"""
-    # 檢查發信冷卻時間 (5 分鐘)
     if current_user.last_message_sent_at:
         cooldown = timedelta(minutes=5)
         if datetime.utcnow() - current_user.last_message_sent_at < cooldown:
@@ -278,12 +282,10 @@ def send_manual_message(
     if target_req.user_id == current_user.id:
         raise HTTPException(status_code=400, detail="不能發送訊息給自己")
         
-    # 提早把資料拿完
     target_email = target_req.user.email
     building = target_req.current_building
     room = target_req.current_room
 
-    # 加入背景任務發信（官方邏輯不可被用戶修改）
     background_tasks.add_task(
         send_manual_message_email,
         target_email,
@@ -293,7 +295,6 @@ def send_manual_message(
         data.message
     )
     
-    # 更新最後發信時間
     current_user.last_message_sent_at = datetime.utcnow()
     db.commit()
     
@@ -306,155 +307,177 @@ def create_exchange_request(
     db: Session = Depends(get_db), 
     current_user: User = Depends(require_auth)
 ):
-    if req.gender not in ["M", "F"]:
-        raise HTTPException(status_code=400, detail="無效的性別")
+    try:
+        # 1. 併發防護：鎖定 User 級別，確保狀態安全
+        db.query(User).filter(User.id == current_user.id).with_for_update().first()
         
-    if req.current_building not in DORM_GENDER_MAP or req.gender not in DORM_GENDER_MAP[req.current_building]:
-        raise HTTPException(status_code=400, detail="目前莊別與您的性別不符")
+        # 2. 核心自動化：性別綁定與檢查
+        user_gender = current_user.gender
         
-    for tb in req.target_buildings:
-        if tb not in DORM_GENDER_MAP or req.gender not in DORM_GENDER_MAP[tb]:
-            raise HTTPException(status_code=400, detail=f"目標莊別 {tb} 與您的性別不符")
+        if not user_gender:
+            # 資料庫沒資料 -> 這是該用戶第一次發布需求，進行一生一次的性別鎖定
+            if not req.gender or req.gender not in ["M", "F"]:
+                raise HTTPException(status_code=400, detail="首次發布必須選擇有效的性別進行綁定")
             
-    # 2. 房號驗證與樓層推導
-    current_room_str = str(req.current_room)
-    if not re.match(r"^\d{3}$", current_room_str):
-        raise HTTPException(status_code=400, detail="房號必須為三位數字")
-    if current_room_str.startswith("0"):
-        raise HTTPException(status_code=400, detail="房號開頭不能為 0")
-        
-    current_floor = int(current_room_str[0])
-    target_buildings_str = ",".join(req.target_buildings)
-    
-    if req.target_room is not None:
-        target_room_str = str(req.target_room)
-        if not re.match(r"^\d{3}$", target_room_str):
-            raise HTTPException(status_code=400, detail="目標房號必須為三位數字")
-
-    # 檢查是否已有處理中的訂單 (加上 with_for_update 鎖定，避免併發造成的 Race Condition)
-    existing_req = db.query(ExchangeRequest).filter(
-        ExchangeRequest.user_id == current_user.id,
-        ExchangeRequest.status.in_(["PENDING", "MATCHED"])
-    ).with_for_update().first()
-    
-    if existing_req:
-        raise HTTPException(status_code=400, detail="您已有進行中的請求，請先解除配對或刪除該請求")
-
-    matched_candidate = None
-    
-    candidates = db.query(ExchangeRequest).filter(
-        ExchangeRequest.status == "PENDING",
-        ExchangeRequest.user_id != current_user.id,
-        ExchangeRequest.gender == req.gender
-    ).with_for_update(skip_locked=True).all()
-    
-    for candidate in candidates:
-        if candidate.current_building not in req.target_buildings:
-            continue
+            # 寫入資料庫，從此鎖死
+            current_user.gender = req.gender
+            db.commit()
+            user_gender = req.gender
             
-        if req.target_floor and candidate.current_floor != req.target_floor:
-            continue
-        if req.target_room and candidate.current_room != req.target_room:
-            continue
+        # 3. 莊別與房號驗證（完全信任並使用資料庫的 user_gender，嚴格 3 碼房號）
+        if req.current_building not in DORM_GENDER_MAP or user_gender not in DORM_GENDER_MAP[req.current_building]:
+            raise HTTPException(status_code=400, detail="目前莊別與您的性別不符")
             
-        b_targets = candidate.target_buildings.split(",") if candidate.target_buildings else []
-        if req.current_building not in b_targets:
-            continue
+        for tb in req.target_buildings:
+            if tb not in DORM_GENDER_MAP or user_gender not in DORM_GENDER_MAP[tb]:
+                raise HTTPException(status_code=400, detail=f"目標莊別 {tb} 與您的性別不符")
+                
+        current_room_str = str(req.current_room)
+        if not re.match(r"^\d{3}$", current_room_str):
+            raise HTTPException(status_code=400, detail="房號必須為三位數字")
+        if current_room_str.startswith("0"):
+            raise HTTPException(status_code=400, detail="房號開頭不能為 0")
             
-        if candidate.target_floor and current_floor != candidate.target_floor:
-            continue
-        if candidate.target_room and req.current_room != candidate.target_room:
-            continue
+        current_floor = int(current_room_str[0])
+        target_buildings_str = ",".join(req.target_buildings)
+        
+        if req.target_room is not None:
+            target_room_str = str(req.target_room)
+            if not re.match(r"^\d{3}$", target_room_str):
+                raise HTTPException(status_code=400, detail="目標房號必須為三位數字")
+
+        # 4. 檢查是否有重複處理中的訂單
+        existing_req = db.query(ExchangeRequest).filter(
+            ExchangeRequest.user_id == current_user.id,
+            ExchangeRequest.status.in_(["PENDING", "MATCHED"])
+        ).first()
+        
+        if existing_req:
+            raise HTTPException(status_code=400, detail="您已有進行中的請求，請先解除配對或刪除該請求")
+
+        # 5. 進行媒合比對
+        matched_candidate = None
+        candidates = db.query(ExchangeRequest).filter(
+            ExchangeRequest.status == "PENDING",
+            ExchangeRequest.user_id != current_user.id,
+            ExchangeRequest.gender == user_gender
+        ).with_for_update(skip_locked=True).all()
+        
+        for candidate in candidates:
+            if candidate.current_building not in req.target_buildings:
+                continue
+                
+            if req.target_floor and candidate.current_floor != req.target_floor:
+                continue
+            if req.target_room and candidate.current_room != req.target_room:
+                continue
+                
+            b_targets = candidate.target_buildings.split(",") if candidate.target_buildings else []
+            if req.current_building not in b_targets:
+                continue
+                
+            if candidate.target_floor and current_floor != candidate.target_floor:
+                continue
+            if candidate.target_room and req.current_room != candidate.target_room:
+                continue
+                
+            matched_candidate = candidate
+            break
             
-        matched_candidate = candidate
-        break
-        
-    if matched_candidate:
-        # 提早將 Email 資料撈出來存成獨立的純文字字串變數
-        current_user_email = str(current_user.email)
-        partner_email = str(matched_candidate.user.email)
+        if matched_candidate:
+            current_user_email = str(current_user.email)
+            partner_email = str(matched_candidate.user.email)
 
-        new_req = ExchangeRequest(
-            user_id=current_user.id,
-            gender=req.gender,
-            current_building=req.current_building,
-            current_floor=current_floor,
-            current_room=req.current_room,
-            current_bed=req.current_bed,
-            target_buildings=target_buildings_str,
-            target_floor=req.target_floor,
-            target_room=req.target_room,
-            status="MATCHED",
-            matched_with_id=matched_candidate.user_id,
-            matched_email=partner_email
-        )
-        db.add(new_req)
-        
-        # 更新 B 訂單 (狀態 MATCHED)
-        matched_candidate.status = "MATCHED"
-        matched_candidate.matched_with_id = current_user.id
-        matched_candidate.matched_email = current_user_email
-        
-        db.commit()
+            new_req = ExchangeRequest(
+                user_id=current_user.id,
+                gender=user_gender,
+                current_building=req.current_building,
+                current_floor=current_floor,
+                current_room=req.current_room,
+                current_bed=req.current_bed,
+                target_buildings=target_buildings_str,
+                target_floor=req.target_floor,
+                target_room=req.target_room,
+                status="MATCHED",
+                matched_with_id=matched_candidate.user_id,
+                matched_email=partner_email
+            )
+            db.add(new_req)
+            
+            matched_candidate.status = "MATCHED"
+            matched_candidate.matched_with_id = current_user.id
+            matched_candidate.matched_email = current_user_email
+            
+            db.commit()
 
-        # 指派背景任務發送 Email，帶入純文字字串變數
-        background_tasks.add_task(send_match_email, current_user_email, partner_email)
-        background_tasks.add_task(send_match_email, partner_email, current_user_email)
+            background_tasks.add_task(send_match_email, current_user_email, partner_email)
+            background_tasks.add_task(send_match_email, partner_email, current_user_email)
 
-        return {"status": "MATCHED", "message": "match成功!", "matched_email": partner_email}
-    else:
-        # 無吻合對象，新增 A 訂單 (狀態 PENDING)
-        new_req = ExchangeRequest(
-            user_id=current_user.id,
-            gender=req.gender,
-            current_building=req.current_building,
-            current_floor=current_floor,
-            current_room=req.current_room,
-            current_bed=req.current_bed,
-            target_buildings=target_buildings_str,
-            target_floor=req.target_floor,
-            target_room=req.target_room,
-            status="PENDING"
-        )
-        db.add(new_req)
-        db.commit()
-        
-        return {"status": "PENDING", "message": "已刊登至大廳，等待有緣人"}
+            return {"status": "MATCHED", "message": "match成功!", "matched_email": partner_email}
+        else:
+            new_req = ExchangeRequest(
+                user_id=current_user.id,
+                gender=user_gender,
+                current_building=req.current_building,
+                current_floor=current_floor,
+                current_room=req.current_room,
+                current_bed=req.current_bed,
+                target_buildings=target_buildings_str,
+                target_floor=req.target_floor,
+                target_room=req.target_room,
+                status="PENDING"
+            )
+            db.add(new_req)
+            db.commit()
+            
+            return {"status": "PENDING", "message": "已刊登至大廳，等待有緣人"}
+            
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="資料庫處理異常，請稍後再試")
+
 
 @app.post("/api/unmatch")
 def unmatch_request(db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
-    """解除配對並退回 PENDING 狀態 (防禦 IDOR 越權存取)"""
-    user_req = db.query(ExchangeRequest).filter(
-        ExchangeRequest.user_id == current_user.id,
-        ExchangeRequest.status == "MATCHED"
-    ).first()
-    
-    if not user_req:
-        raise HTTPException(status_code=400, detail="找不到符合的配對記錄，或您無權限修改")
+    try:
+        # 1. 併發防護：先鎖定當前使用者的請求
+        user_req = db.query(ExchangeRequest).filter(
+            ExchangeRequest.user_id == current_user.id,
+            ExchangeRequest.status == "MATCHED"
+        ).with_for_update().first()
         
-    partner_id = user_req.matched_with_id
-    
-    partner_req = db.query(ExchangeRequest).filter(
-        ExchangeRequest.user_id == partner_id,
-        ExchangeRequest.status == "MATCHED",
-        ExchangeRequest.matched_with_id == current_user.id
-    ).first()
-    
-    user_req.status = "PENDING"
-    user_req.matched_with_id = None
-    user_req.matched_email = None
-    
-    if partner_req:
-        partner_req.status = "PENDING"
-        partner_req.matched_with_id = None
-        partner_req.matched_email = None
+        if not user_req:
+            raise HTTPException(status_code=400, detail="找不到符合的配對記錄，或您無權限修改")
+            
+        partner_id = user_req.matched_with_id
         
-    db.commit()
-    return {"message": "已成功解除配對，重回大廳尋找"}
+        # 2. 鎖定對方的請求
+        partner_req = db.query(ExchangeRequest).filter(
+            ExchangeRequest.user_id == partner_id,
+            ExchangeRequest.status == "MATCHED",
+            ExchangeRequest.matched_with_id == current_user.id
+        ).with_for_update().first()
+        
+        # 3. 執行狀態重置
+        user_req.status = "PENDING"
+        user_req.matched_with_id = None
+        user_req.matched_email = None
+        
+        if partner_req:
+            partner_req.status = "PENDING"
+            partner_req.matched_with_id = None
+            partner_req.matched_email = None
+            
+        db.commit()
+        return {"message": "已成功解除配對，重回大廳尋找"}
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="資料庫處理異常，請稍後再試")
+
 
 @app.get("/api/my_request")
 def get_my_request(db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
-    """取得當前使用者的請求狀態，供前端判斷顯示畫面"""
     req = db.query(ExchangeRequest).filter(
         ExchangeRequest.user_id == current_user.id
     ).order_by(ExchangeRequest.created_at.desc()).first()
@@ -478,7 +501,6 @@ def get_my_request(db: Session = Depends(get_db), current_user: User = Depends(r
 
 @app.delete("/api/requests")
 def delete_request(db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
-    """刪除當前的 PENDING 請求"""
     req = db.query(ExchangeRequest).filter(
         ExchangeRequest.user_id == current_user.id,
         ExchangeRequest.status == "PENDING"

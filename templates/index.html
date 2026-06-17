@@ -35,7 +35,7 @@
         {% endif %}
     </header>
 
-    <main class="max-w-6xl mx-auto p-6">
+    <main class="max-w-6xl mx-auto p-6 relative">
         {% if not user %}
             <div class="flex flex-col items-center justify-center min-h-[60vh] space-y-6">
                 <div class="text-center space-y-2">
@@ -82,6 +82,7 @@
                                     <input type="radio" name="gender" value="F" class="text-blue-600" required> 女
                                 </label>
                             </div>
+                            <p class="text-xs text-red-500 font-medium tracking-wide mt-1">⚠️ 請注意：性別一經選定並送出後將永久綁定，後續無法更改。</p>
                         </div>
 
                         <div class="p-4 bg-gray-50 dark:bg-zinc-950 border border-gray-100 dark:border-zinc-800 rounded-lg space-y-4">
@@ -96,7 +97,7 @@
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium mb-1">房號</label>
-                                    <input type="text" name="current_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="例如: 205" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
+                                    <input type="text" name="current_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="三碼數字 (例: 205)" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900" required>
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium mb-1">床號</label>
@@ -132,7 +133,7 @@
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium mb-1">目標房號 (選填)</label>
-                                    <input type="text" name="target_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="例如: 205" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+                                    <input type="text" name="target_room" pattern="\d{3}" maxlength="3" oninput="this.value = this.value.replace(/[^0-9]/g, '');" placeholder="三碼數字 (例: 205)" class="w-full p-2 border border-gray-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
                                 </div>
                             </div>
                         </div>
@@ -155,17 +156,40 @@
         {% endif %}
     </main>
 
+    <div id="genderConfirmModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-opacity">
+        <div class="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl shadow-2xl max-w-md w-full p-6 transform transition-all">
+            <div class="flex items-center gap-3 mb-4 text-red-600 dark:text-red-500">
+                <svg class="w-8 h-8 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                <h3 class="text-xl font-bold">重要確認：性別綁定</h3>
+            </div>
+            <div class="text-gray-700 dark:text-zinc-300 space-y-3 mb-6">
+                <p>您即將發布宿舍交換需求。系統偵測到您所選擇的性別為：</p>
+                <p class="text-center text-2xl font-bold text-blue-600 dark:text-blue-400 py-2" id="modalGenderDisplay">男</p>
+                <div class="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-lg text-sm border border-red-100 dark:border-red-900/50">
+                    <span class="font-bold">⚠️ 警告：</span>性別資料一經送出後，將永久綁定於您的帳號，後續將無法再自行更改。若遭檢舉性別不實，可能會影響您的換宿權益。
+                </div>
+                <p class="text-sm mt-2">請問是否確認無誤並送出表單？</p>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" id="cancelSubmitBtn" class="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 font-medium rounded transition-colors">
+                    返回修改
+                </button>
+                <button type="button" id="confirmSubmitBtn" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded transition-colors shadow-sm">
+                    確認綁定並發布
+                </button>
+            </div>
+        </div>
+    </div>
+
     {% if user %}
     <script>
         const DORM_GENDER_MAP = {
-            // 女生專屬宿舍 (Female Only)
             "仰山莊": ["F"], 
             "涵星一莊": ["F"], 
             "沁月莊": ["F"], 
             "行雲二莊": ["F"],
             "擷雲二莊": ["F"],  
             
-            // 男生專屬宿舍 (Male Only)
             "迎曦莊": ["M"], 
             "涵星二莊": ["M"], 
             "向晴莊": ["M"], 
@@ -193,13 +217,14 @@
         let currentGender = null;
         let myRequestId = null;
 
-        // 初始化
+        // 🌟 新增：用於暫存準備送出的表單資料
+        let pendingSubmitData = null;
+
         async function init() {
             await fetchMyStatus();
             await fetchLobby();
         }
 
-        // 獲取目前狀態
         async function fetchMyStatus() {
             try {
                 const res = await fetch('/api/my_request');
@@ -234,7 +259,6 @@
                         submitBtn.disabled = true;
                         submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
                         
-                        // 鎖定表單
                         const inputs = form.querySelectorAll('input, select');
                         inputs.forEach(input => input.disabled = true);
                         
@@ -247,7 +271,6 @@
                         submitBtn.disabled = false;
                         submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
                         
-                        // 解鎖表單
                         const inputs = form.querySelectorAll('input, select');
                         inputs.forEach(input => input.disabled = false);
                     }
@@ -257,7 +280,6 @@
             }
         }
 
-        // 手動發送訊息
         async function sendMessage(reqId) {
             const msg = prompt("請輸入你想跟對方說的話：", "你好！我對你的換宿需求很感興趣，希望能與你聯繫討論細節。");
             if (msg === null) return;
@@ -279,7 +301,6 @@
             }
         }
 
-        // 獲取大廳資料
         async function fetchLobby() {
             try {
                 if (!currentGender) {
@@ -304,12 +325,10 @@
 
                 const renderRequest = (req, isMine) => {
                     const el = document.createElement('div');
-                    
                     el.className = `p-4 border rounded-lg shadow-sm transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${isMine ? 'bg-blue-50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-zinc-800 hover:border-gray-300 dark:hover:border-zinc-600'}`;
                     
                     const genderIcon = req.gender === 'M' ? '<span class="text-blue-500 font-bold">男</span>' : '<span class="text-red-500 font-bold">女</span>';
                     const targetText = req.target_buildings ? req.target_buildings.replace(/,/g, ' / ') : '不拘';
-                    
                     const timeString = new Date(req.created_at).toLocaleString('zh-TW', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
 
                     el.innerHTML = `
@@ -361,7 +380,6 @@
             }
         }
 
-        // 依據性別更新莊別選項
         function updateBuildings(gender) {
             currentBuildingSelect.innerHTML = '<option value="">請選擇莊別</option>';
             targetBuildingsContainer.innerHTML = '';
@@ -371,13 +389,11 @@
             Object.entries(DORM_GENDER_MAP).forEach(([building, genders]) => {
                 if (genders.includes(gender)) {
                     hasValidBuilding = true;
-                    // Current building option
                     const opt = document.createElement('option');
                     opt.value = building;
                     opt.textContent = building;
                     currentBuildingSelect.appendChild(opt);
 
-                    // Target building checkbox
                     const label = document.createElement('label');
                     label.className = 'flex items-center gap-2 cursor-pointer text-sm';
                     label.innerHTML = `<input type="checkbox" name="target_buildings" value="${building}" class="rounded border-gray-300"> ${building}`;
@@ -399,21 +415,19 @@
             });
         });
 
-        // 訊息顯示
         function showMessage(msg, type = 'error') {
             formMessage.textContent = msg;
             formMessage.className = `text-sm p-3 rounded mb-4 block ${type === 'error' ? 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 border border-red-200 dark:border-red-900' : 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400 border border-green-200 dark:border-green-900'}`;
         }
 
-        // 表單送出
-        form.addEventListener('submit', async (e) => {
+        // 🌟 攔截表單送出事件，改為觸發 Modal
+        form.addEventListener('submit', (e) => {
             e.preventDefault();
             formMessage.classList.add('hidden');
             
             const formData = new FormData(form);
             const data = Object.fromEntries(formData.entries());
             
-            // 處理複選框
             data.target_buildings = formData.getAll('target_buildings');
             
             if (data.target_buildings.length === 0) {
@@ -421,14 +435,43 @@
                 return;
             }
 
-            // 處理可選數字轉型
+            if (data.current_room && data.current_room.length !== 3) {
+                showMessage('目前房號必須為三碼數字！');
+                return;
+            }
+            if (data.target_room && data.target_room.length !== 3) {
+                showMessage('目標房號必須為三碼數字！');
+                return;
+            }
+
             if (data.current_room) data.current_room = parseInt(data.current_room, 10);
-            
             if (data.target_floor) data.target_floor = parseInt(data.target_floor, 10);
             else delete data.target_floor;
-
             if (data.target_room) data.target_room = parseInt(data.target_room, 10);
             else delete data.target_room;
+
+            // 暫存驗證過的表單資料
+            pendingSubmitData = data;
+
+            // 更新 Modal 中的性別文字
+            const displayGender = data.gender === 'M' ? '男生' : '女生';
+            document.getElementById('modalGenderDisplay').textContent = displayGender;
+            
+            // 顯示確認提示框
+            document.getElementById('genderConfirmModal').classList.remove('hidden');
+        });
+
+        // 🌟 處理 Modal 的取消按鈕
+        document.getElementById('cancelSubmitBtn').addEventListener('click', () => {
+            document.getElementById('genderConfirmModal').classList.add('hidden');
+            pendingSubmitData = null; // 清空暫存
+        });
+
+        // 🌟 處理 Modal 的確認發布按鈕 (真正打 API 的地方)
+        document.getElementById('confirmSubmitBtn').addEventListener('click', async () => {
+            document.getElementById('genderConfirmModal').classList.add('hidden');
+            
+            if (!pendingSubmitData) return;
 
             submitBtn.disabled = true;
             submitBtn.textContent = '處理中...';
@@ -437,7 +480,7 @@
                 const res = await fetch('/api/requests', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
+                    body: JSON.stringify(pendingSubmitData)
                 });
                 
                 const result = await res.json();
@@ -448,11 +491,9 @@
                     form.reset();
                     targetBuildingsContainer.innerHTML = '<span class="text-sm text-gray-500 dark:text-zinc-500">請先選擇性別</span>';
                     currentBuildingSelect.innerHTML = '<option value="">請先選擇性別</option>';
-                    await init(); // 重新整理狀態
+                    await init(); 
                     
-                    if (result.status === 'MATCHED') {
-                        // alert('媒合成功！');
-                    } else {
+                    if (result.status !== 'MATCHED') {
                         showMessage(result.message, 'success');
                     }
                 }
@@ -463,10 +504,10 @@
                     submitBtn.disabled = false;
                     submitBtn.textContent = '發布需求並尋找媒合';
                 }
+                pendingSubmitData = null;
             }
         });
 
-        // 刪除請求
         deleteRequestBtn.addEventListener('click', async () => {
             if(!confirm('確定要刪除目前發布中的需求嗎？')) return;
             try {
@@ -483,7 +524,6 @@
             }
         });
 
-        // 解除配對
         unmatchBtn.addEventListener('click', async () => {
             if(!confirm('確定要解除配對嗎？您將重新回到大廳尋找對象。')) return;
             
@@ -509,15 +549,11 @@
             }
         });
 
-        // 啟動
         init();
-
-        // 設定定時更新大廳 (每 15 秒)
         setInterval(fetchLobby, 15000);
 
-        // 閒置 10 分鐘自動登出邏輯
         let idleTimeout;
-        const IDLE_LIMIT = 10 * 60 * 1000; // 10 分鐘 (毫秒)
+        const IDLE_LIMIT = 10 * 60 * 1000; 
 
         function resetIdleTimeout() {
             clearTimeout(idleTimeout);
@@ -527,12 +563,10 @@
             }, IDLE_LIMIT);
         }
 
-        // 監聽各種使用者操作以重置閒置計時器
         ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
             document.addEventListener(evt, resetIdleTimeout, true);
         });
 
-        // 初始化計時器
         resetIdleTimeout();
     </script>
     {% endif %}

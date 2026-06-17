@@ -32,6 +32,10 @@ class User(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     email = Column(String, unique=True, index=True)
     name = Column(String, nullable=True)
+    
+    # [新增] 將性別綁定於使用者帳號，防止發送請求時遭到惡意竄改
+    gender = Column(String, nullable=True) 
+    
     last_message_sent_at = Column(DateTime, nullable=True)
     requests = relationship("ExchangeRequest", back_populates="user")
 
@@ -39,11 +43,14 @@ class ExchangeRequest(Base):
     __tablename__ = "exchange_requests"
     id = Column(String, primary_key=True, default=generate_uuid)
     user_id = Column(String, ForeignKey("users.id"))
+    
+    # 這裡保留 gender 欄位是為了提升大廳列表與媒合時的查詢效能
+    # 但在寫入時，後端會強制讀取 User.gender 的值來填寫
     gender = Column(String)
     
     current_building = Column(String)
     current_floor = Column(Integer)   # 後端程式自動從 current_room 推導寫入
-    current_room = Column(Integer)    # 三位數字
+    current_room = Column(Integer)    # 三或四位數字
     current_bed = Column(String)      
     
     target_buildings = Column(String) 
@@ -62,4 +69,4 @@ def init_db():
 
 if __name__ == "__main__":
     init_db()
-    print("PostgreSQL (Neon) the database has been initialized。")
+    print("PostgreSQL (Neon) the database has been initialized.")
