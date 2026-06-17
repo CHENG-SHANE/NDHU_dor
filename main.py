@@ -232,7 +232,7 @@ def send_manual_message(
     
     current_user.last_message_sent_at = datetime.utcnow()
 
-    #累計大廳主動聯絡次數
+    # 累計大廳主動聯絡次數
     stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
     if stat:
         stat.total_contacts += 1
@@ -325,17 +325,13 @@ def create_exchange_request(
             matched_candidate = candidate
             break
             
-            #累計刊登次數
+        # 🌟 修正點：將 SystemStat 的查詢與設定正確移出 for 迴圈外
         stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
-        if stat:
-            stat.total_postings += 1
-
 
         if matched_candidate:
-            #累計媒合次數
+            # 累計自動媒合人數 +2 (雙方同學都算完成)
             if stat:
-                stat.total_matches += 2  # 雙方都算一次
-
+                stat.total_matches += 2
 
             current_user_email = str(current_user.email)
             partner_email = str(matched_candidate.user.email)
@@ -367,6 +363,10 @@ def create_exchange_request(
 
             return {"status": "MATCHED", "message": "match成功!", "matched_email": partner_email}
         else:
+            # 🌟 優化點：只有在沒媒合成功、卡片真正掛到大廳時，才算一筆累積刊登總數
+            if stat:
+                stat.total_postings += 1
+
             new_req = ExchangeRequest(
                 user_id=current_user.id,
                 gender=user_gender,
@@ -454,6 +454,17 @@ def get_my_request(db: Session = Depends(get_db), current_user: User = Depends(r
         }
     }
 
+@app.get("/api/stats")
+def get_exchange_stats(db: Session = Depends(get_db)):
+    stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
+    if not stat:
+        return {"total_postings": 0, "total_matches": 0, "total_contacts": 0}
+    return {
+        "total_postings": stat.total_postings,
+        "total_matches": stat.total_matches,
+        "total_contacts": stat.total_contacts
+    }
+
 @app.delete("/api/requests")
 def delete_request(db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
     req = db.query(ExchangeRequest).filter(
@@ -465,14 +476,3 @@ def delete_request(db: Session = Depends(get_db), current_user: User = Depends(r
     db.delete(req)
     db.commit()
     return {"message": "刪除成功"}
-
-@app.get("/api/stats")
-def get_exchange_stats(db: Session = Depends(get_db)):
-    stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
-    if not stat:
-        return {"total_postings": 0, "total_matches": 0, "total_contacts": 0}
-    return {
-        "total_postings": stat.total_postings,
-        "total_matches": stat.total_matches,
-        "total_contacts": stat.total_contacts
-    }
