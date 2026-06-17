@@ -64,8 +64,24 @@ class ExchangeRequest(Base):
 
     user = relationship("User", back_populates="requests")
 
+class SystemStat(Base):
+    __tablename__ = "system_stats"
+    id = Column(Integer, primary_key=True, default=1)
+    total_postings = Column(Integer, default=0)
+    total_matches = Column(Integer, default=0)
+    total_contacts = Column(Integer, default=0)
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
+        if not stat:
+            stat = SystemStat(id=1, total_postings=0, total_matches=0, total_contacts=0)
+            db.add(stat)
+            db.commit()
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     init_db()

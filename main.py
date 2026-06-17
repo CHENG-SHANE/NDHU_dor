@@ -15,7 +15,7 @@ from authlib.integrations.starlette_client import OAuth, OAuthError
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
-from database import SessionLocal, User, ExchangeRequest
+from database import SessionLocal, User, ExchangeRequest, SystemStat
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -231,6 +231,12 @@ def send_manual_message(
     )
     
     current_user.last_message_sent_at = datetime.utcnow()
+    
+    # 🌟 新增：累計大廳主動聯絡次數
+    stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
+    if stat:
+        stat.total_contacts += 1
+        
     db.commit()
     
     return {"message": "已成功發送訊息給對方"}
@@ -319,7 +325,16 @@ def create_exchange_request(
             matched_candidate = candidate
             break
             
+        # 🌟 新增：累計刊登筆數 (只要成功建立請求就 +1)
+        stat = db.query(SystemStat).filter(SystemStat.id == 1).first()
+        if stat:
+            stat.total_postings += 1
+
         if matched_candidate:
+            # 🌟 新增：累計自動媒合成功人數 (每次成功媒合代表 2 人)
+            if stat:
+                stat.total_matches += 2
+
             current_user_email = str(current_user.email)
             partner_email = str(matched_candidate.user.email)
 
@@ -448,3 +463,14 @@ def delete_request(db: Session = Depends(get_db), current_user: User = Depends(r
     db.delete(req)
     db.commit()
     return {"message": "刪除成功"}
+
+@app.get("/api/stats")
+def get_exchange_stats(db: Session = Depends(get_db)):
+    stats = db.query(SystemStat).filter(SystemStat.id == 1).first()
+    if not stats:
+        return {"total_postings": 0, "total_matches": 0, "total_contacts": 0}
+    return {
+        "total_postings": stats.total_postings,
+        "total_matches": stats.total_matches,
+        "total_contacts": stats.total_contacts
+    }
