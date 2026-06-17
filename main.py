@@ -183,9 +183,11 @@ def get_requests(
     if limit > 100:
         limit = 100
 
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
     requests = db.query(ExchangeRequest).filter(
         ExchangeRequest.status == "PENDING",
-        ExchangeRequest.gender == gender
+        ExchangeRequest.gender == gender,
+        ExchangeRequest.created_at >= thirty_days_ago
     ).order_by(ExchangeRequest.created_at.desc()).limit(limit).all()
     for r in requests:
         r.user_email = r.user.email
@@ -418,8 +420,11 @@ def get_my_request(db: Session = Depends(get_db), current_user: User = Depends(r
     if not req:
         return {"has_request": False}
         
+    is_expired = req.status == "PENDING" and (datetime.utcnow() - req.created_at > timedelta(days=30))
+
     return {
         "has_request": True,
+        "is_expired": is_expired,
         "request": {
             "id": req.id,
             "status": req.status,
